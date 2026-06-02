@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ExamSeat — Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <a href="/" class="logo">ExamSeat</a>
+      <a href="/" class="admin-link">Student View</a>
+    </div>
+  </header>
+
+  <main class="admin-main">
+
+    <div class="admin-top">
+      <div>
+        <p class="eyebrow">Administration Panel</p>
+        <h1>Room Management</h1>
+      </div>
+      <div class="stats-row" id="stats-row">
+        <div class="stat-pill"><span id="stat-rooms">0</span> rooms</div>
+        <div class="stat-pill"><span id="stat-avail">0</span> seats available</div>
+        <div class="stat-pill"><span id="stat-occ">0</span> assigned</div>
+      </div>
+    </div>
+
+    <div class="admin-grid">
+
+      <aside class="add-room-panel">
+        <h2>Add a room</h2>
+        <div class="form-group">
+          <label for="room-name">Room name</label>
+          <input type="text" id="room-name" placeholder="e.g. Room 101" maxlength="40"/>
+        </div>
+        <div class="form-group">
+          <label for="room-rows">Number of rows</label>
+          <input type="number" id="room-rows" placeholder="e.g. 5" min="1" max="20"/>
+        </div>
+        <div class="form-group">
+          <label for="room-seats">Seats per row</label>
+          <input type="number" id="room-seats" placeholder="e.g. 10" min="1" max="20"/>
+        </div>
+        <div class="capacity-preview" id="cap-preview" style="display:none;">
+          <span id="cap-text"></span>
+        </div>
+        <button class="add-btn" onclick="addRoom()">Add Room</button>
+        <p class="form-note" id="add-error"></p>
+
+        <div class="legend">
+          <h3>Seat legend</h3>
+          <div class="legend-item"><span class="legend-dot avail"></span> Available</div>
+          <div class="legend-item"><span class="legend-dot buffer"></span> Buffer (gap)</div>
+          <div class="legend-item"><span class="legend-dot occupied"></span> Occupied</div>
+        </div>
+      </aside>
+
+      <section class="rooms-section">
+        <div id="rooms-list">
+          <div class="empty-state" id="empty-state">
+            <p>No rooms added yet.</p>
+            <p class="muted">Add your first room using the form.</p>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <footer>
+    <span>CFAI Examination Cell — Admin Panel</span>
+  </footer>
+
+  <script>
+    let refreshInterval;
+
+    // Live capacity preview
+    const nameI = document.getElementById('room-name');
+    const rowsI = document.getElementById('room-rows');
+    const seatsI = document.getElementById('room-seats');
+    const capPrev = document.getElementById('cap-preview');
+    const capText = document.getElementById('cap-text');
+
+    [rowsI, seatsI].forEach(el => el.addEventListener('input', updatePreview));
+
+    function updatePreview() {
+      const r = parseInt(rowsI.value) || 0;
+      const s = parseInt(seatsI.value) || 0;
+      if (r > 0 && s > 0) {
+        const valid = r * Math.ceil(s / 2);
+        const buf = r * Math.floor(s / 2);
+        capText.textContent = `${valid} valid seats, ${buf} buffer seats (${r * s} total)`;
+        capPrev.style.display = 'block';
+      } else {
+        capPrev.style.display = 'none';
+      }
+    }
+
+    async function addRoom() {
+      const errEl = document.getElementById('add-error');
+      errEl.textContent = '';
+      const name = nameI.value.trim();
+      const rows = parseInt(rowsI.value);
+      const seats = parseInt(seatsI.value);
+
+      if (!name || !rows || !seats) {
+        errEl.textContent = 'All three fields are required.';
+        return;
+      }
+
+      const btn = document.querySelector('.add-btn');
+      btn.disabled = true;
+      btn.textContent = 'Adding...';
+
+      try {
+        const res = await fetch('/api/rooms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, rows, seats_per_row: seats })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errEl.textContent = data.error;
+        } else {
+          nameI.value = '';
+          rowsI.value = '';
+          seatsI.value = '';
+          capPrev.style.display = 'none';
+          await refreshRooms();
+        }
+      } catch {
+        errEl.textContent = 'Server error. Try again.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Add Room';
+      }
+    }
+
+    async function deleteRoom(roomId) {
+      if (!confirm('Remove this room? All seat assignments in this room will be cleared.')) return;
+      await fetch(`/api/rooms/${roomId}`, { method: 'DELETE' });
+      await refreshRooms();
+    }
+
+    async function refreshRooms() {
+      const [roomsRes, statsRes] = await Promise.all([
+        fetch('/api/rooms'),
+        fetch('/api/stats')
+      ]);
+      const roomsData = await roomsRes.json();
+      const statsData = await statsRes.json();
+
+      updateStats(statsData);
+      renderRooms(roomsData);
+    }
+
+    function updateStats(s) {
+      document.getElementById('stat-rooms').textContent = s.rooms;
+      document.getElementById('stat-avail').textContent = s.available;
+      document.getElementById('stat-occ').textContent = s.occupied;
+    }
+
+    function renderRooms(roomsData) {
+      const container = document.getElementById('rooms-list');
+      const emptyState = document.getElementById('empty-state');
+
+      if (roomsData.length === 0) {
+        container.innerHTML = '';
+        container.appendChild(emptyState || createEmptyState());
+        return;
+      }
+
+      let html = '';
+      for (const room of roomsData) {
+        const pct = room.valid_total > 0 ? Math.round((room.valid_occupied / room.valid_total) * 100) : 0;
+        html += `
+          <div class="room-card">
+            <div class="room-card-header">
+              <div>
+                <h2 class="room-name">${room.name}</h2>
+                <p class="room-meta">${room.rows} rows &times; ${room.seats_per_row} seats &nbsp;&middot;&nbsp; ${room.valid_total} valid &nbsp;&middot;&nbsp; ${room.valid_occupied} occupied</p>
+              </div>
+              <div class="room-actions">
+                <div class="pct-badge ${pct === 100 ? 'full' : ''}">${pct}% full</div>
+                <button class="del-btn" onclick="deleteRoom('${room.id}')">Remove</button>
+              </div>
+            </div>
+            <div class="progress-bar-wrap">
+              <div class="progress-bar-fill" style="width: ${pct}%"></div>
+            </div>
+            <div class="seat-grid" data-cols="${room.seats_per_row}">
+              ${renderSeatGrid(room)}
+            </div>
+          </div>
+        `;
+      }
+      container.innerHTML = html;
+    }
+
+    function renderSeatGrid(room) {
+      const byRow = {};
+      for (const seat of room.seats) {
+        if (!byRow[seat.row]) byRow[seat.row] = [];
+        byRow[seat.row].push(seat);
+      }
+
+      let html = '';
+      for (let r = 1; r <= room.rows; r++) {
+        const rowSeats = (byRow[r] || []).sort((a, b) => a.seat - b.seat);
+        html += `<div class="seat-row">`;
+        html += `<span class="row-label">R${r}</span>`;
+        for (const seat of rowSeats) {
+          let cls = 'seat';
+          let dataAttr = '';
+          if (!seat.valid) {
+            cls += ' seat-buffer';
+          } else if (seat.occupied_by) {
+            cls += ' seat-occupied';
+            dataAttr = `data-ticket="${seat.occupied_by}"`;
+          } else {
+            cls += ' seat-available';
+          }
+          html += `<div class="${cls}" ${dataAttr}></div>`;
+        }
+        html += `</div>`;
+      }
+      return html;
+    }
+
+    // Initial load + auto-refresh every 5s
+    refreshRooms();
+    setInterval(refreshRooms, 5000);
+
+    // Keyboard shortcut: Enter to add room
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.target === nameI || e.target === rowsI || e.target === seatsI)) {
+        addRoom();
+      }
+    });
+  </script>
+
+</body>
+</html>

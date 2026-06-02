@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ExamSeat — Find Your Seat</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <a href="/" class="logo">ExamSeat</a>
+      <a href="/admin" class="admin-link">Admin</a>
+    </div>
+  </header>
+
+  <main class="student-main">
+
+    <div class="hero-block">
+      <p class="eyebrow">Examination Seating System</p>
+      <h1>Find your assigned seat</h1>
+      <p class="hero-sub">Enter the hall ticket number printed on your admit card. Your room and seat will be assigned instantly.</p>
+    </div>
+
+    <div class="search-card">
+      <div class="input-row">
+        <input
+          type="text"
+          id="ticket-input"
+          placeholder="e.g. HT20240001"
+          autocomplete="off"
+          spellcheck="false"
+          maxlength="20"
+        />
+        <button id="find-btn" onclick="findSeat()">Get Seat</button>
+      </div>
+      <p class="input-hint">Hall ticket numbers are printed above your name on your admit card.</p>
+    </div>
+
+    <div id="result-area"></div>
+
+    <div class="info-strip">
+      <div class="info-item">
+        <span class="info-label">Seating rule</span>
+        <span class="info-val">One-chair gap enforced in every row</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Need help?</span>
+        <span class="info-val">Contact the examination office at Desk 1</span>
+      </div>
+      <div class="info-item">
+        <span class="info-label">Arrive by</span>
+        <span class="info-val">30 minutes before your session</span>
+      </div>
+    </div>
+
+  </main>
+
+  <footer>
+    <span>CFAI Examination Cell</span>
+  </footer>
+
+  <script>
+    const input = document.getElementById('ticket-input');
+    const btn = document.getElementById('find-btn');
+    const resultArea = document.getElementById('result-area');
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') findSeat();
+    });
+
+    input.addEventListener('input', () => {
+      if (resultArea.innerHTML) resultArea.innerHTML = '';
+    });
+
+    async function findSeat() {
+      const val = input.value.trim();
+      if (!val) {
+        input.focus();
+        showError('Please enter your hall ticket number.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Searching...';
+
+      try {
+        const res = await fetch('/api/assign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ student_id: val })
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          showError(data.error || 'Something went wrong.');
+        } else if (data.already_assigned) {
+          showResult(data, true);
+        } else {
+          showResult(data, false);
+        }
+      } catch {
+        showError('Could not reach the server. Please try again.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Get Seat';
+      }
+    }
+
+    function showResult(data, returning) {
+      resultArea.innerHTML = `
+        <div class="result-card reveal">
+          <div class="result-status ${returning ? 'returning' : 'new'}">
+            ${returning ? 'Your existing seat assignment' : 'Seat assigned successfully'}
+          </div>
+          <div class="result-main">
+            <div class="result-room">${data.room_name}</div>
+            <div class="result-seat-detail">Row ${data.row} &nbsp;&middot;&nbsp; Seat ${data.seat}</div>
+          </div>
+          <div class="result-meta">
+            <div class="meta-item">
+              <span class="meta-label">Hall Ticket</span>
+              <span class="meta-val">${data.student_id}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Row</span>
+              <span class="meta-val">${data.row}</span>
+            </div>
+            <div class="meta-item">
+              <span class="meta-label">Seat</span>
+              <span class="meta-val">${data.seat}</span>
+            </div>
+          </div>
+          <p class="result-note">Please proceed to ${data.room_name} and locate Row ${data.row}, Seat ${data.seat}. Do not sit in any other seat.</p>
+        </div>
+      `;
+    }
+
+    function showError(msg) {
+      resultArea.innerHTML = `<div class="error-card reveal"><p>${msg}</p></div>`;
+    }
+  </script>
+
+</body>
+</html>
